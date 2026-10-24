@@ -13,6 +13,44 @@ export interface Profile {
   misses: Misses;
   /** Fractions check scores out of 10: before world 1 and after world 2. */
   checks: { before?: number; after?: number };
+  /** Days in a row with a win, and the last such day (YYYY-MM-DD, local time). */
+  streak: { count: number; last?: string };
+  /** Daily treats saved up; each buys a tennis ball in a level. */
+  treats: number;
+  /** Tile forms the child has been introduced to with a "New!" card. */
+  seen: string[];
+}
+
+/** Dogs: 0-3 are on every board from the start; 4-23 are won, one per level, for the sticker book. */
+export const DOG_NAMES = [
+  'corgi', 'dachshund', 'dalmatian', 'pug', 'collie', 'labrador', 'husky', 'poodle',
+  'beagle', 'shiba', 'chihuahua', 'frenchie', 'schnauzer', 'westie', 'spaniel', 'greyhound',
+  'bernese', 'pomeranian', 'jackrussell', 'cockapoo', 'samoyed', 'boxer', 'maltese', 'newfoundland',
+];
+
+/** Dogs on every board from the start. */
+const STARTERS = [0, 1, 2, 3];
+
+/** The sticker-book dog each level wins. */
+export function stickerFor(levelId: string): number {
+  return 4 + LEVELS.findIndex((l) => l.id === levelId);
+}
+
+/** Dogs that can appear on this child's board: the starters plus every sticker won. */
+export function boardDogs(p: Profile): number[] {
+  return [...new Set([...STARTERS, ...Object.keys(p.stars).filter((id) => p.stars[id] > 0).map(stickerFor)])];
+}
+
+export function dayKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Fills in fields added after a profile was saved. */
+function upgrade(p: Profile): Profile {
+  p.streak ??= { count: 0 };
+  p.treats ??= 0;
+  p.seen ??= [];
+  return p;
 }
 
 export interface Store {
@@ -50,7 +88,7 @@ export class Profiles {
   all(): Profile[] {
     try {
       const raw = this.store.get(KEY);
-      return raw ? (JSON.parse(raw) as Profile[]) : [];
+      return raw ? (JSON.parse(raw) as Profile[]).map(upgrade) : [];
     } catch {
       return [];
     }
@@ -72,6 +110,9 @@ export class Profiles {
       stars: {},
       misses: {},
       checks: {},
+      streak: { count: 0 },
+      treats: 0,
+      seen: [],
     };
     this.save([...this.all(), p]);
     return p;
@@ -90,9 +131,41 @@ export class Profiles {
     this.save(this.all().filter((p) => p.id !== id));
   }
 
-  recordStars(id: string, levelId: string, stars: number): Profile {
-    return this.update(id, (p) => {
+  /**
+   * Records a win. The first win of a day extends the streak (or restarts it after a gap)
+   * and earns a treat. Returns what was new, for the result screen.
+   */
+  recordWin(id: string, levelId: string, stars: number, today: Date = new Date()): { sticker: boolean; treat: boolean } {
+    let sticker = false;
+    let treat = false;
+    this.update(id, (p) => {
+      sticker = !(p.stars[levelId] > 0);
       p.stars[levelId] = Math.max(p.stars[levelId] ?? 0, stars);
+      const day = dayKey(today);
+      if (p.streak.last === day) return;
+      const yesterday = new Date(today);
+      yesterday.setDate(today.getDate() - 1);
+      p.streak = { count: p.streak.last === dayKey(yesterday) ? p.streak.count + 1 : 1, last: day };
+      p.treats += 1;
+      treat = true;
+    });
+    return { sticker, treat };
+  }
+
+  useTreat(id: string): boolean {
+    let ok = false;
+    this.update(id, (p) => {
+      if (p.treats > 0) {
+        p.treats -= 1;
+        ok = true;
+      }
+    });
+    return ok;
+  }
+
+  markSeen(id: string, forms: string[]): void {
+    this.update(id, (p) => {
+      p.seen = [...new Set([...p.seen, ...forms])];
     });
   }
 
@@ -121,6 +194,14 @@ export function unlocked(p: Profile, levelId: string): boolean {
   const i = LEVELS.findIndex((l) => l.id === levelId);
   if (i <= 0) return true;
   return (p.stars[LEVELS[i - 1].id] ?? 0) > 0;
+}
+
+/** The streak as it stands today: it lapses once a whole day is missed. */
+export function currentStreak(p: Profile, today: Date = new Date()): number {
+  if (!p.streak.last) return 0;
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  return p.streak.last === dayKey(today) || p.streak.last === dayKey(yesterday) ? p.streak.count : 0;
 }
 
 export function totalStars(p: Profile): number {

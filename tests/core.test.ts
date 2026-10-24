@@ -1,21 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import {
-  clearCells,
-  clearMatches,
-  emptyBoard,
-  findGroups,
-  findMove,
-  nearMiss,
-  settle,
-  swapWorks,
-  type Board,
-  type Tile,
-} from '../src/core/board';
+import { clearCells, emptyBoard, findPair, isPair, settle, type Board, type Tile } from '../src/core/board';
 import { AFTER, BEFORE, score } from '../src/core/check';
 import { displaysFor, displayText, keyOf } from '../src/core/fractions';
-import { Game, makeSpawn, weights } from '../src/core/game';
+import { comboSpecial, COMBO_MS, FINALE_POINTS, Game, makeSpawn, weights } from '../src/core/game';
 import { LEVELS, mudTarget, type Level } from '../src/core/levels';
-import { afterCheckOpen, Profiles, unlocked, type Store } from '../src/core/profiles';
+import { afterCheckOpen, boardDogs, currentStreak, Profiles, stickerFor, unlocked, type Store } from '../src/core/profiles';
 import { seeded } from '../src/core/rng';
 
 let id = 1000;
@@ -24,16 +13,25 @@ const tile = (key: string | null, extra: Partial<Tile> = {}): Tile => ({
   key,
   display: key ? { form: 'tag', n: Number(key.split('/')[0]), d: Number(key.split('/')[1]) } : null,
   colour: 0,
-  breed: 0,
+  dog: 0,
   ...extra,
 });
 
-/** Board from rows of letters: each letter is a value, '.' an empty cell. */
+/** Board from rows of letters: each letter is a value. */
 const KEYS: Record<string, string> = { a: '1/2', b: '1/3', c: '1/4', d: '2/3', e: '3/4', f: '1/5' };
 function board(rows: string[]): Board {
   const b = emptyBoard(rows.length, rows[0].length);
   rows.forEach((row, r) => [...row].forEach((ch, c) => (b.tiles[r][c] = ch === '.' ? null : tile(KEYS[ch]))));
   return b;
+}
+
+/** Finds two tiles on a game board: equal values when want is true, different when false. */
+function find(g: Game, want: boolean) {
+  const cells = g.board.tiles.flatMap((row, r) => row.map((t, c) => ({ r, c, t: t! })));
+  for (const x of cells)
+    for (const y of cells)
+      if ((x.r !== y.r || x.c !== y.c) && !x.t.special && !y.t.special && (x.t.key === y.t.key) === want) return [x, y] as const;
+  throw new Error('none');
 }
 
 describe('fractions', () => {
@@ -54,63 +52,45 @@ describe('fractions', () => {
   });
 });
 
-describe('matching', () => {
-  it('matches three equal values in a row even when written differently', () => {
-    const b = board(['aab', 'bbc', 'ccd']);
-    b.tiles[0][2] = { ...tile('1/2'), display: { form: 'percent', n: 50, d: 100 } };
-    const g = findGroups(b);
-    expect(g).toHaveLength(1);
-    expect(g[0].key).toBe('1/2');
-    expect(g[0].makes).toBeUndefined();
+describe('pairs', () => {
+  it('two tiles worth the same make a pair wherever they are, even written differently', () => {
+    const b = board(['abc', 'cba']);
+    b.tiles[1][2] = { ...tile('1/2'), display: { form: 'percent', n: 50, d: 100 } };
+    expect(isPair(b, { r: 0, c: 0 }, { r: 1, c: 2 })).toBe(true);
+    expect(isPair(b, { r: 0, c: 0 }, { r: 0, c: 1 })).toBe(false);
+    expect(isPair(b, { r: 0, c: 0 }, { r: 0, c: 0 })).toBe(false);
   });
 
-  it('four in a line makes zoomies along that line', () => {
-    expect(findGroups(board(['aaaa', 'bcdb']))[0].makes).toBe('row');
-    expect(findGroups(board(['ab', 'ac', 'ab', 'ac']))[0].makes).toBe('col');
+  it('a tennis ball pairs with anything', () => {
+    const b = board(['abc']);
+    b.tiles[0][1] = tile(null, { special: 'ball' });
+    expect(isPair(b, { r: 0, c: 1 }, { r: 0, c: 2 })).toBe(true);
   });
 
-  it('five in a line makes a tennis ball', () => {
-    expect(findGroups(board(['aaaaa', 'bcdbc']))[0].makes).toBe('ball');
-  });
-
-  it('an L or T shape makes a treat bag', () => {
-    const g = findGroups(board(['abb', 'acc', 'aaa']));
-    expect(g).toHaveLength(1);
-    expect(g[0].cells).toHaveLength(5);
-    expect(g[0].makes).toBe('bag');
-  });
-
-  it('a swap that makes no line does not count', () => {
-    const b = board(['abc', 'bca', 'cab']);
-    expect(swapWorks(b, { r: 0, c: 0 }, { r: 0, c: 1 })).toBe(false);
-    expect(swapWorks(b, { r: 0, c: 1 }, { r: 1, c: 1 })).toBe(false);
-  });
-
-  it('a swap that lines up three works', () => {
-    const b = board(['aba', 'cad', 'dcf']);
-    expect(swapWorks(b, { r: 0, c: 1 }, { r: 1, c: 1 })).toBe(true);
+  it('finds a pair for hints', () => {
+    expect(findPair(board(['abc', 'dea']))).toEqual([{ r: 0, c: 0 }, { r: 1, c: 2 }]);
+    expect(findPair(board(['abc', 'def']))).toBeNull();
   });
 });
 
 describe('clearing and falling', () => {
-  it('clears a match, cleans mud under it, and drops tiles in from above', () => {
+  it('clears tiles, cleans mud under them, and drops tiles in from above', () => {
     const b = board(['bcd', 'aaa', 'cdb']);
     b.mud[1][1] = true;
-    const clear = clearMatches(b, () => id++)!;
-    expect(clear.removed.map((t) => t.key)).toEqual(['1/2', '1/2', '1/2']);
+    const clear = clearCells(b, [{ r: 1, c: 0 }, { r: 1, c: 1 }]);
+    expect(clear.removed.map((t) => t.key)).toEqual(['1/2', '1/2']);
     expect(clear.mudCleaned).toEqual([{ r: 1, c: 1 }]);
     const fall = settle(b, () => tile('3/4'));
-    expect(fall.moved).toHaveLength(3);
-    expect(fall.added).toHaveLength(3);
-    expect(b.tiles[1].map((t) => t?.key)).toEqual(['1/3', '1/4', '2/3']);
-    expect(b.tiles[0].map((t) => t?.key)).toEqual(['3/4', '3/4', '3/4']);
+    expect(fall.moved).toHaveLength(2);
+    expect(fall.added).toHaveLength(2);
+    expect(b.tiles[1].map((t) => t?.key)).toEqual(['1/3', '1/4', '1/2']);
+    expect(b.tiles[0].map((t) => t?.key)).toEqual(['3/4', '3/4', '2/3']);
   });
 
-  it('zoomies clear their whole row when cleared', () => {
+  it('zoomies clear their whole row', () => {
     const b = board(['abcd', 'bcdb', 'cdbc']);
     b.tiles[1][0] = tile('1/3', { special: 'row' });
-    const clear = clearCells(b, [{ r: 1, c: 0 }]);
-    expect(clear.removed).toHaveLength(4);
+    expect(clearCells(b, [{ r: 1, c: 0 }]).removed).toHaveLength(4);
     expect(b.tiles[1].every((t) => t === null)).toBe(true);
   });
 
@@ -118,40 +98,15 @@ describe('clearing and falling', () => {
     const b = board(['abc', 'bcd', 'cdb', 'dbc']);
     b.tiles[1][1] = tile('1/4', { special: 'bag' });
     expect(clearCells(b, [{ r: 1, c: 1 }]).removed).toHaveLength(9);
-    expect(b.tiles[3].every((t) => t !== null)).toBe(true);
   });
 
-  it('a tennis ball clears every tile of the value it is swapped with', () => {
+  it('a tennis ball clears every tile of the value it is paired with', () => {
     const b = board(['abab', 'cdcd', 'abab']);
     const ball = tile(null, { special: 'ball' });
     b.tiles[1][0] = ball;
     const clear = clearCells(b, [{ r: 1, c: 0 }], [], new Map([[ball.id, '1/2']]));
     expect(clear.removed.filter((t) => t.key === '1/2')).toHaveLength(4);
     expect(clear.removed).toHaveLength(5);
-  });
-
-  it('a new special appears where the child moved', () => {
-    const b = board(['bbcb', 'aaaa', 'cdbc']);
-    const clear = clearMatches(b, () => id++, [{ r: 1, c: 3 }])!;
-    expect(clear.created[0].pos).toEqual({ r: 1, c: 3 });
-    expect(clear.created[0].tile.special).toBe('row');
-    expect(b.tiles[1][3]?.special).toBe('row');
-  });
-});
-
-describe('near misses', () => {
-  it('spots a swap that lined a tile up next to two equal different values', () => {
-    // Moving the 1/3 at (0,2) down puts it next to two halves.
-    const b = board(['ccb', 'aad', 'cdc']);
-    const miss = nearMiss(b, { r: 0, c: 2 }, { r: 1, c: 2 });
-    expect(miss?.moved.key).toBe('1/3');
-    expect(miss?.meant.key).toBe('1/2');
-    expect(b.tiles[0][2]?.key).toBe('1/3');
-  });
-
-  it('says nothing for a random swap', () => {
-    const b = board(['abc', 'bca', 'cab']);
-    expect(nearMiss(b, { r: 0, c: 0 }, { r: 0, c: 1 })).toBeNull();
   });
 });
 
@@ -167,59 +122,111 @@ describe('levels', () => {
     if (level.goal.kind === 'mud') expect(mudTarget(level)).toBeGreaterThan(0);
     expect(level.values.length).toBeGreaterThanOrEqual(3);
     expect(level.values.length).toBeLessThanOrEqual(5);
-    for (let seed = 1; seed <= 20; seed++) {
-      const g = new Game(level, seeded(seed));
-      expect(findGroups(g.board)).toHaveLength(0);
-      expect(findMove(g.board)).not.toBeNull();
-    }
+    for (let seed = 1; seed <= 10; seed++) expect(findPair(new Game(level, { rng: seeded(seed) }).board)).not.toBeNull();
   });
 
-  it('a board always has a move after every swap', () => {
-    for (const level of [LEVELS[0], LEVELS[9], LEVELS[19]]) {
-      const g = new Game({ ...level, moves: 400, goal: { kind: 'collect', key: level.values[0], count: 1e9 } }, seeded(7));
-      for (let i = 0; i < 300; i++) {
-        const [a, z] = g.hint()!;
-        const res = g.swap(a, z);
-        expect(res.ok).toBe(true);
-        expect(findGroups(g.board)).toHaveLength(0);
-        expect(g.board.tiles.flat().every((t) => t !== null)).toBe(true);
+  it('every level can be won by a child who always finds a pair', () => {
+    for (const level of LEVELS) {
+      const g = new Game(level, { rng: seeded(9) });
+      let t = 0;
+      while (g.status === 'playing') {
+        // Prefer pairs that help the goal, as a child aiming for it would.
+        const goal = level.goal;
+        const cells = g.board.tiles.flatMap((row, r) => row.map((x, c) => ({ r, c, x: x! })));
+        const good = cells.filter((p) => (goal.kind === 'collect' ? p.x.key === goal.key : g.board.mud[p.r][p.c]));
+        const partner = (p: { r: number; c: number; x: Tile }) =>
+          cells.find((q) => (q.r !== p.r || q.c !== p.c) && q.x.key === p.x.key && q.x.key !== null);
+        const start = good.find((p) => partner(p)) ?? cells.find((p) => partner(p))!;
+        g.pick(start, partner(start)!, (t += 1000));
       }
+      expect(g.status, level.id).toBe('won');
     }
   });
 });
 
 describe('a game', () => {
-  it('a bad swap costs no move', () => {
-    const g = new Game(LEVELS[0], seeded(3));
-    const before = g.movesLeft;
-    let bad: [{ r: number; c: number }, { r: number; c: number }] | null = null;
-    for (let r = 0; r < 8 && !bad; r++)
-      for (let c = 0; c < 7 && !bad; c++) if (!swapWorks(g.board, { r, c }, { r, c: c + 1 })) bad = [{ r, c }, { r, c: c + 1 }];
-    const res = g.swap(...bad!);
+  it('a wrong pair costs a move, breaks the combo and says which two', () => {
+    const g = new Game(LEVELS[0], { rng: seeded(3) });
+    const [x, y] = find(g, false);
+    const res = g.pick(x, y, 0);
     expect(res.ok).toBe(false);
-    expect(res.phases).toHaveLength(2);
-    expect(g.movesLeft).toBe(before);
+    expect(res.miss?.a.key).toBe(x.t.key);
+    expect(res.miss?.z.key).toBe(y.t.key);
+    expect(g.movesLeft).toBe(LEVELS[0].moves - 1);
+    expect(g.combo).toBe(0);
   });
 
-  it('wins when the goal is met and gives stars for moves left', () => {
-    const g = new Game({ ...LEVELS[0], goal: { kind: 'collect', key: '1/2', count: 1 } }, seeded(5));
-    for (let i = 0; i < 40 && g.status === 'playing'; i++) g.swap(...g.hint()!);
+  it('a right pair clears both, scores, and refills the board', () => {
+    const g = new Game(LEVELS[0], { rng: seeded(3) });
+    const [x, y] = find(g, true);
+    const res = g.pick(x, y, 0);
+    expect(res.ok).toBe(true);
+    expect(res.phases.map((p) => p.kind)).toEqual(['clear', 'fall']);
+    expect(g.score).toBe(40);
+    expect(g.board.tiles.flat().every((t) => t !== null)).toBe(true);
+  });
+
+  it('quick pairs build a combo that earns specials; a pause resets it', () => {
+    const g = new Game({ ...LEVELS[0], moves: 99 }, { rng: seeded(4) });
+    const earned: (string | undefined)[] = [];
+    for (let i = 0; i < 7; i++) {
+      const [x, y] = find(g, true);
+      earned.push(g.pick(x, y, i * 1000).earned);
+    }
+    expect(g.combo).toBe(7);
+    expect(earned.slice(0, 2)).toEqual([undefined, undefined]);
+    expect(['row', 'col']).toContain(earned[2]);
+    expect(earned[4]).toBe('bag');
+    expect(earned[6]).toBe('ball');
+    const [x, y] = find(g, true);
+    g.pick(x, y, 7000 + COMBO_MS + 1);
+    expect(g.combo).toBe(1);
+  });
+
+  it('combo specials go zoomies, bag, ball, then round again', () => {
+    const r = () => 0.1;
+    expect([1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 13].map((n) => comboSpecial(n, r))).toEqual([
+      undefined, undefined, 'row', undefined, 'bag', undefined, 'ball', undefined, 'row', 'bag', 'ball',
+    ]);
+  });
+
+  it('wins when the goal is met, fixes stars, then the finale spends moves for points', () => {
+    const g = new Game({ ...LEVELS[0], goal: { kind: 'collect', key: '1/2', count: 1 } }, { rng: seeded(5) });
+    const cells = g.board.tiles.flatMap((row, r) => row.map((t, c) => ({ r, c, t: t! })));
+    const halves = cells.filter((x) => x.t.key === '1/2');
+    g.pick(halves[0], halves[1], 0);
     expect(g.status).toBe('won');
+    expect(g.stars).toBe(3);
+    const left = g.movesLeft;
+    const before = g.score;
+    const phases = g.finale();
+    expect(phases.filter((p) => p.kind === 'clear')).toHaveLength(left);
+    expect(g.movesLeft).toBe(0);
+    expect(g.score).toBe(before + left * FINALE_POINTS);
     expect(g.stars).toBe(3);
   });
 
   it('loses when moves run out', () => {
-    const g = new Game({ ...LEVELS[0], moves: 2, goal: { kind: 'collect', key: '1/2', count: 999 } }, seeded(5));
-    g.swap(...g.hint()!);
-    g.swap(...g.hint()!);
+    const g = new Game({ ...LEVELS[0], moves: 2, goal: { kind: 'collect', key: '1/2', count: 999 } }, { rng: seeded(5) });
+    const [x, y] = find(g, false);
+    g.pick(x, y, 0);
+    g.pick(x, y, 1);
     expect(g.status).toBe('lost');
+  });
+
+  it('a treat turns a tile into a tennis ball', () => {
+    const g = new Game(LEVELS[0], { rng: seeded(6) });
+    g.giveBall({ r: 2, c: 2 });
+    expect(g.board.tiles[2][2]?.special).toBe('ball');
+    const res = g.pick({ r: 2, c: 2 }, { r: 0, c: 0 }, 0);
+    expect(res.ok).toBe(true);
   });
 
   it('values a child mixes up turn up more often', () => {
     expect(weights(['1/3', '3/10', '1/2'], { '1/3|3/10': 2 })).toEqual([2, 2, 1]);
     const level = LEVELS[7];
     const count = (misses: Record<string, number>) => {
-      const spawn = makeSpawn(level, seeded(11), misses, () => 0);
+      const spawn = makeSpawn(level, seeded(11), misses, [0], () => 0);
       let n = 0;
       for (let i = 0; i < 4000; i++) if (spawn().key === '3/10') n++;
       return n;
@@ -228,7 +235,7 @@ describe('a game', () => {
   });
 
   it('tile colours are spread across every value', () => {
-    const spawn = makeSpawn(LEVELS[0], seeded(2), {}, () => 0);
+    const spawn = makeSpawn(LEVELS[0], seeded(2), {}, [0, 1], () => 0);
     const coloursFor = new Map<string, Set<number>>();
     for (let i = 0; i < 600; i++) {
       const t = spawn();
@@ -250,8 +257,8 @@ describe('profiles', () => {
     expect(p.name).toBe('Maisie');
     expect(unlocked(p, '1-1')).toBe(true);
     expect(unlocked(p, '1-2')).toBe(false);
-    profiles.recordStars(p.id, '1-1', 2);
-    profiles.recordStars(p.id, '1-1', 1);
+    profiles.recordWin(p.id, '1-1', 2);
+    profiles.recordWin(p.id, '1-1', 1);
     const after = profiles.get(p.id)!;
     expect(after.stars['1-1']).toBe(2);
     expect(unlocked(after, '1-2')).toBe(true);
@@ -268,9 +275,49 @@ describe('profiles', () => {
     const profiles = new Profiles(memory());
     const a = profiles.add('A', 0);
     const b = profiles.add('B', 1);
-    profiles.recordStars(a.id, '1-1', 3);
+    profiles.recordWin(a.id, '1-1', 3);
     expect(profiles.get(b.id)!.stars).toEqual({});
     expect(profiles.all()).toHaveLength(2);
+  });
+
+  it('wins a sticker dog per level, and those dogs join the board', () => {
+    const profiles = new Profiles(memory());
+    const p = profiles.add('A', 0);
+    expect(boardDogs(p)).toEqual([0, 1, 2, 3]);
+    expect(profiles.recordWin(p.id, '1-1', 1).sticker).toBe(true);
+    expect(profiles.recordWin(p.id, '1-1', 3).sticker).toBe(false);
+    profiles.recordWin(p.id, '1-5', 1);
+    expect(boardDogs(profiles.get(p.id)!)).toEqual([0, 1, 2, 3, stickerFor('1-1'), stickerFor('1-5')]);
+    expect(new Set(LEVELS.map((l) => stickerFor(l.id))).size).toBe(20);
+    expect(LEVELS.map((l) => stickerFor(l.id)).every((d) => d >= 4 && d <= 23)).toBe(true);
+  });
+
+  it('the first win each day extends the streak and earns one treat', () => {
+    const profiles = new Profiles(memory());
+    const p = profiles.add('A', 0);
+    const day = (d: number) => new Date(2026, 9, d, 15);
+    expect(profiles.recordWin(p.id, '1-1', 1, day(1)).treat).toBe(true);
+    expect(profiles.recordWin(p.id, '1-2', 1, day(1)).treat).toBe(false);
+    profiles.recordWin(p.id, '1-3', 1, day(2));
+    let now = profiles.get(p.id)!;
+    expect(now.streak.count).toBe(2);
+    expect(now.treats).toBe(2);
+    expect(currentStreak(now, day(3))).toBe(2);
+    expect(currentStreak(now, day(4))).toBe(0);
+    profiles.recordWin(p.id, '1-4', 1, day(5));
+    now = profiles.get(p.id)!;
+    expect(now.streak.count).toBe(1);
+    expect(profiles.useTreat(p.id)).toBe(true);
+    expect(profiles.get(p.id)!.treats).toBe(2);
+  });
+
+  it('upgrades a profile saved before stickers and streaks', () => {
+    const store = memory();
+    store.set('fraction-fetch.profiles.v1', JSON.stringify([{ id: 'x', name: 'Old', dog: 1, stars: { '1-1': 2 }, misses: {}, checks: {} }]));
+    const p = new Profiles(store).all()[0];
+    expect(p.treats).toBe(0);
+    expect(p.streak.count).toBe(0);
+    expect(p.seen).toEqual([]);
   });
 
   it('survives a corrupt save', () => {

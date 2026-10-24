@@ -9,7 +9,6 @@ export const PALETTE = [0xff6b8b, 0xffa53d, 0xffd83d, 0x5fd38d, 0x4cc3ff, 0xa98b
 const INK = 0x2b2340;
 const FONT = 'Fredoka, system-ui, sans-serif';
 
-export const BREED_NAMES = ['corgi', 'dachshund', 'dalmatian', 'pug', 'collie', 'labrador', 'husky', 'poodle'];
 
 function shade(colour: number, by: number): number {
   const ch = (shift: number) => Math.max(0, Math.min(255, ((colour >> shift) & 255) + by));
@@ -91,7 +90,7 @@ export function tileArt(tile: Tile, s: number, dogs: Texture[]): Container {
     else v.position.set(0, s * 0.1);
     c.addChild(v);
   }
-  const dog = new Sprite(dogs[tile.breed % dogs.length]);
+  const dog = new Sprite(dogs[tile.dog % dogs.length]);
   dog.anchor.set(0.5);
   dog.width = dog.height = s * 0.3;
   dog.position.set(-s * 0.3, -s * 0.3);

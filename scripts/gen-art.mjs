@@ -23,6 +23,23 @@ const DOGS = {
   labrador: 'a golden labrador',
   husky: 'a grey and white husky',
   poodle: 'a fluffy apricot poodle',
+  // Sticker-book dogs, won one per level.
+  beagle: 'a beagle',
+  shiba: 'a shiba inu',
+  chihuahua: 'a tan chihuahua',
+  frenchie: 'a cream french bulldog',
+  schnauzer: 'a grey schnauzer',
+  westie: 'a white west highland terrier',
+  spaniel: 'a golden cocker spaniel',
+  greyhound: 'a grey greyhound',
+  bernese: 'a bernese mountain dog',
+  pomeranian: 'an orange pomeranian',
+  jackrussell: 'a jack russell terrier',
+  cockapoo: 'a chocolate cockapoo',
+  samoyed: 'a fluffy white samoyed',
+  boxer: 'a brown boxer',
+  maltese: 'a white maltese',
+  newfoundland: 'a black newfoundland',
 };
 
 const SCENES = {
