@@ -4,16 +4,15 @@ import '@fontsource/fredoka/500.css';
 import '@fontsource/fredoka/600.css';
 import './ui/style.css';
 import { registerSW } from 'virtual:pwa-register';
-import { nearMiss, swapWorks, type Pos } from './core/board';
+import type { Pos } from './core/board';
 import { AFTER, BEFORE, score, type Question } from './core/check';
 import { displaysFor, displayText, prettyKey, valueOf, type Display } from './core/fractions';
-import { Game, type SwapResult } from './core/game';
+import { COMBO_MS, Game, type Phase, type PickResult } from './core/game';
 import { LEVELS, levelById, mudTarget, nextLevel, WORLDS, type Level } from './core/levels';
-import { afterCheckOpen, browserStore, Profiles, totalStars, unlocked, type Profile } from './core/profiles';
+import { afterCheckOpen, boardDogs, browserStore, currentStreak, DOG_NAMES, Profiles, stickerFor, totalStars, unlocked, type Profile } from './core/profiles';
 import { barSvg } from './ui/bars';
 import { BoardView, loadArt } from './ui/board-view';
 import * as sound from './ui/sound';
-import { BREED_NAMES } from './ui/tile-art';
 
 registerSW({ immediate: true });
 
@@ -21,7 +20,9 @@ const BASE = import.meta.env.BASE_URL;
 const store = browserStore();
 const profiles = new Profiles(store);
 const app = document.getElementById('app')!;
-const dogUrl = (i: number) => `${BASE}art/${BREED_NAMES[i % BREED_NAMES.length]}.webp`;
+const dogUrl = (i: number) => `${BASE}art/${DOG_NAMES[i % DOG_NAMES.length]}.webp`;
+/** Dogs a new player can pick as their avatar. */
+const AVATARS = 8;
 
 sound.setMuted(store.get('fraction-fetch.muted') === '1');
 document.addEventListener('pointerdown', () => sound.unlock(), { capture: true });
@@ -105,7 +106,7 @@ function whoScreen(editing = false): void {
 }
 
 function newPlayerScreen(): void {
-  let dog = Math.floor(Math.random() * BREED_NAMES.length);
+  let dog = Math.floor(Math.random() * AVATARS);
   const root = screen(html`
     <main class="who">
       <h2>New player</h2>
@@ -113,7 +114,7 @@ function newPlayerScreen(): void {
         <label>Your name <input name="name" maxlength="20" autocomplete="off" required /></label>
         <p>Pick your dog</p>
         <div class="dogs">
-          ${BREED_NAMES.map((n, i) => `<button type="button" class="dog${i === dog ? ' on' : ''}" data-dog="${i}" aria-label="${n}"><img src="${dogUrl(i)}" alt="" /></button>`).join('')}
+          ${DOG_NAMES.slice(0, AVATARS).map((n, i) => `<button type="button" class="dog${i === dog ? ' on' : ''}" data-dog="${i}" aria-label="${n}"><img src="${dogUrl(i)}" alt="" /></button>`).join('')}
         </div>
         <div class="row">
           <button type="button" class="ghost" data-back>Back</button>
@@ -144,6 +145,8 @@ function mapScreen(id: string): void {
   const p = profiles.get(id);
   if (!p) return whoScreen();
   const needsBefore = p.checks.before === undefined;
+  const streak = currentStreak(p);
+  const won = LEVELS.filter((l) => (p.stars[l.id] ?? 0) > 0).length;
   const root = screen(html`
     <main class="map">
       <header class="bar">
@@ -152,6 +155,11 @@ function mapScreen(id: string): void {
         <div class="who-name"><strong>${esc(p.name)}</strong><small>⭐ ${totalStars(p)} · ${checkLine(p)}</small></div>
         ${muteButton()}
       </header>
+      <section class="perks">
+        <div class="perk"><span>🐾</span><b>${streak}</b><small>day streak</small></div>
+        <div class="perk"><span>🦴</span><b>${p.treats}</b><small>treats</small></div>
+        <button class="perk book" data-book><span>📒</span><b>${won}/${LEVELS.length}</b><small>sticker book</small></button>
+      </section>
       ${
         needsBefore
           ? `<section class="card check-card">
@@ -196,12 +204,44 @@ function mapScreen(id: string): void {
     </main>`);
   wireMute(root);
   root.querySelector('[data-who]')!.addEventListener('click', () => whoScreen());
+  root.querySelector('[data-book]')!.addEventListener('click', () => bookScreen(id));
   root.querySelectorAll<HTMLButtonElement>('[data-level]').forEach((b) =>
     b.addEventListener('click', () => levelIntro(id, levelById(b.dataset.level!))),
   );
   root.querySelectorAll<HTMLButtonElement>('[data-check]').forEach((b) =>
     b.addEventListener('click', () => checkScreen(id, b.dataset.check as 'before' | 'after')),
   );
+}
+
+// ---------- sticker book ----------
+
+const dogName = (i: number) => {
+  const n = DOG_NAMES[i];
+  const names: Record<string, string> = { frenchie: 'French bulldog', jackrussell: 'Jack Russell', shiba: 'Shiba Inu', spaniel: 'Cocker spaniel', bernese: 'Bernese' };
+  return names[n] ?? n[0].toUpperCase() + n.slice(1);
+};
+
+function bookScreen(id: string): void {
+  const p = profiles.get(id)!;
+  const root = screen(html`
+    <main class="map">
+      <header class="bar">
+        <button class="icon" data-back aria-label="Back to map">⬅</button>
+        <div class="who-name"><strong>${esc(p.name)}'s sticker book</strong><small>Win a level to win its dog. 3 stars makes it gold!</small></div>
+      </header>
+      <section class="book-grid">
+        ${LEVELS.map((l) => {
+          const dog = stickerFor(l.id);
+          const stars = p.stars[l.id] ?? 0;
+          return `<div class="sticker${stars ? '' : ' missing'}${stars === 3 ? ' gold' : ''}">
+            <img src="${dogUrl(dog)}" alt="" />
+            <strong>${stars ? dogName(dog) : '?'}</strong>
+            <small>Level ${l.id}</small>
+          </div>`;
+        }).join('')}
+      </section>
+    </main>`);
+  root.querySelector('[data-back]')!.addEventListener('click', () => mapScreen(id));
 }
 
 // ---------- level intro and play ----------
@@ -216,11 +256,17 @@ function goalExamples(level: Level): string {
   const g = level.goal;
   if (g.kind !== 'collect') {
     const total = (level.mud?.join('').match(/#/g) ?? []).length;
-    return `There are ${total} mud squares. ${prettyKey(`${g.n}/${g.d}`)} of ${total} is ${mudTarget(level)}. Match dogs on top of the mud to clean it.`;
+    return `There are ${total} mud squares. ${prettyKey(`${g.n}/${g.d}`)} of ${total} is ${mudTarget(level)}. Clear dogs standing in the mud to clean it.`;
   }
   const shown = [...new Set(displaysFor(g.key, level.forms, level.dens).map(displayText))];
   return `${prettyKey(g.key)} can look like ${shown.join(', ')}.`;
 }
+
+/** "New!" cards: shown the first time a child meets decimals or percents. */
+const NEW_FORMS: Record<string, string> = {
+  decimal: '<b>Decimals!</b> 0.5 is the same as 1/2 and 5/10. 0.7 is 7/10. 0.25 is 25/100, which is 1/4.',
+  percent: '<b>Percents!</b> Percent means "out of 100". 50% is 50/100, which is 1/2. 25% is 1/4.',
+};
 
 function modal(markup: string): HTMLElement {
   const wrap = document.createElement('div');
@@ -231,18 +277,27 @@ function modal(markup: string): HTMLElement {
 }
 
 function levelIntro(id: string, level: Level): void {
+  const p = profiles.get(id)!;
+  const fresh = level.forms.filter((f) => NEW_FORMS[f] && !p.seen.includes(f));
   const m = modal(html`
     <h2>Level ${level.id}</h2>
+    ${fresh.map((f) => `<p class="new-card"><span class="new-tag">New!</span> ${NEW_FORMS[f]}</p>`).join('')}
     <p class="goal">${goalText(level)}</p>
     <p class="hint-text">${goalExamples(level)}</p>
-    <p>You have <b>${level.moves}</b> moves.</p>
+    <p>Tap two dogs worth the same. You have <b>${level.moves}</b> goes.</p>
     <div class="row">
       <button class="ghost" data-close>Back</button>
       <button class="big" data-play>Play!</button>
     </div>`);
   m.querySelector('[data-close]')!.addEventListener('click', () => m.remove());
-  m.querySelector('[data-play]')!.addEventListener('click', () => void playScreen(id, level));
+  m.querySelector('[data-play]')!.addEventListener('click', () => {
+    if (fresh.length) profiles.markSeen(id, fresh);
+    void playScreen(id, level);
+  });
 }
+
+const CHEERS = ['Good!', 'Pawsome!', 'Woof-tastic!', 'Fur-midable!', 'Paw-fect!'];
+const EARNED: Record<string, string> = { row: 'Zoomies!', col: 'Zoomies!', bag: 'Treat bag!', ball: 'Tennis ball!' };
 
 async function playScreen(id: string, level: Level): Promise<void> {
   const p = profiles.get(id)!;
@@ -256,23 +311,27 @@ async function playScreen(id: string, level: Level): Promise<void> {
           <div class="meter"><span data-meter></span></div>
           <small data-progress></small>
         </div>
-        <div class="moves"><strong data-moves>${level.moves}</strong><small>moves</small><small>Score <b data-score>0</b></small></div>
+        <div class="moves"><strong data-moves>${level.moves}</strong><small>goes</small><small>Score <b data-score>0</b></small></div>
         ${muteButton()}
-        <p class="tip" data-tip hidden>Match 3 dogs worth the same! Swipe a dog to swap it with its neighbour.</p>
+        <div class="combo" data-combo hidden><b data-combo-n></b><span class="combo-bar"><span></span></span></div>
+        <button class="treat" data-treat ${p.treats ? '' : 'hidden'}>🦴 Use a treat <b data-treats>${p.treats}</b></button>
       </header>
-      <div class="board-wrap"><div class="board" data-board></div><div class="hand" hidden>👆</div></div>
+      <div class="board-wrap"><div class="board" data-board></div><div class="pops" data-pops></div><div class="spot" data-spot hidden></div></div>
+      <div class="biscuit" data-biscuit hidden><img src="${dogUrl(0)}" alt="Biscuit" /><div class="bubble" data-say></div></div>
       <div class="miss" data-miss hidden></div>
     </main>`);
   wireMute(root);
   root.querySelector('[data-map]')!.addEventListener('click', () => mapScreen(id));
 
-  const game = new Game(level, Math.random, p.misses);
+  const game = new Game(level, { misses: p.misses, dogs: boardDogs(p) });
   const host = root.querySelector<HTMLElement>('[data-board]')!;
   const view = new BoardView();
   board = view;
   await loadArt(BASE);
   await document.fonts.load('600 20px Fredoka');
   await view.init(host, boardSize(root));
+  const tutorial = level.tutorial && !p.seen.includes('tutorial');
+  if (tutorial) setUpTutorial(game);
   view.show(game);
   // Some tablet browsers fire their rotate event before the screen size changes, so watch the
   // page's real size instead, and size the board once it settles.
@@ -280,13 +339,23 @@ async function playScreen(id: string, level: Level): Promise<void> {
   const watcher = new ResizeObserver(() => {
     clearTimeout(resizeTimer);
     resizeTimer = window.setTimeout(() => {
-      if (board === view) view.size = boardSize(root);
-      else watcher.disconnect();
+      if (board === view) {
+        view.size = boardSize(root);
+        onResized();
+      } else watcher.disconnect();
     }, 150);
   });
   watcher.observe(document.documentElement);
-  const onResize = () => {
-    if (board === view) view.size = boardSize(root);
+  let onResized = () => {};
+
+  // Board pixels → page pixels, for pop-ups, the tutorial spotlight and tests.
+  const toScreen = (cells: Pos[]) => {
+    const rect = view.app.canvas.getBoundingClientRect();
+    const scale = rect.width / view.px;
+    return cells.map((pos) => {
+      const c = view.centre(pos);
+      return { x: rect.left + c.x * scale, y: rect.top + c.y * scale };
+    });
   };
 
   const update = () => {
@@ -299,41 +368,105 @@ async function playScreen(id: string, level: Level): Promise<void> {
   };
   update();
 
-  if (level.tutorial) showTutorial(root, view, game);
+  const pop = (text: string, at: Pos, big = false) => {
+    const wrap = root.querySelector<HTMLElement>('.board-wrap')!.getBoundingClientRect();
+    const [pt] = toScreen([at]);
+    const el = document.createElement('div');
+    el.className = `pop-word${big ? ' loud' : ''}`;
+    el.textContent = text;
+    el.style.left = `${pt.x - wrap.left}px`;
+    el.style.top = `${pt.y - wrap.top}px`;
+    root.querySelector('[data-pops]')!.appendChild(el);
+    setTimeout(() => el.remove(), 1200);
+  };
+
+  const showCombo = (n: number) => {
+    const box = root.querySelector<HTMLElement>('[data-combo]')!;
+    if (n < 2) {
+      box.setAttribute('hidden', '');
+      return;
+    }
+    box.removeAttribute('hidden');
+    root.querySelector('[data-combo-n]')!.textContent = `Combo ×${n}`;
+    // Restart the draining bar: the combo lasts COMBO_MS from this pair.
+    const bar = box.querySelector<HTMLElement>('.combo-bar span')!;
+    bar.style.animation = 'none';
+    void bar.offsetWidth;
+    bar.style.animation = `drain ${COMBO_MS}ms linear forwards`;
+    clearTimeout(Number(box.dataset.timer));
+    box.dataset.timer = String(setTimeout(() => box.setAttribute('hidden', ''), COMBO_MS));
+  };
+
+  const shake = () => {
+    const w = root.querySelector<HTMLElement>('.board-wrap')!;
+    w.classList.remove('shake');
+    void w.offsetWidth;
+    w.classList.add('shake');
+  };
 
   view.onClear = (phase) => {
-    if (phase.clear.created.length || phase.clear.fired.length) sound.bark();
-    else sound.squeak(phase.combo);
-    if (phase.combo === 1) {
-      const keys = [...new Set(phase.clear.removed.map((t) => t.key).filter((k): k is string => k !== null))];
-      profiles.recordMatch(id, keys);
-    }
+    if (phase.clear.fired.length) {
+      sound.bark(2);
+      shake();
+    } else sound.squeak(game.combo || 1);
     update();
-  };
-  view.onBadSwap = (result) => {
-    sound.boop();
-    if (result.miss) showMiss(root, id, result);
-  };
-  view.onMove = () => {
-    update();
-    root.querySelector('.hand')?.setAttribute('hidden', '');
-    const tip = root.querySelector('[data-tip]');
-    if (tip && !tip.hasAttribute('hidden')) {
-      tip.setAttribute('hidden', '');
-      onResize();
-    }
-    if (game.status !== 'playing') setTimeout(() => resultModal(id, game), 400);
   };
 
-  // Test hook: lets the end-to-end tests find a good move, or a near-miss swap, in screen pixels.
-  const toScreen = (cells: Pos[]) => {
-    const rect = view.app.canvas.getBoundingClientRect();
-    const scale = rect.width / view.px;
-    return cells.map((pos) => {
-      const c = view.centre(pos);
-      return { x: rect.left + c.x * scale, y: rect.top + c.y * scale };
-    });
+  const tut = tutorial ? runTutorial(root, view, toScreen, id) : null;
+  if (tut) onResized = tut.reposition;
+
+  view.onPick = (result) => {
+    update();
+    tut?.picked(result);
+    if (result.ok) {
+      const [a, z] = (result.phases[0] as Extract<Phase, { kind: 'clear' }>).pair!;
+      const mid = { r: (a.r + z.r) / 2, c: (a.c + z.c) / 2 };
+      pop(CHEERS[Math.min(result.combo, CHEERS.length) - 1], mid);
+      if (result.earned) setTimeout(() => pop(EARNED[result.earned!], z, true), 350);
+      showCombo(result.combo);
+      const keys = [...new Set((result.phases[0] as Extract<Phase, { kind: 'clear' }>).clear.removed.map((t) => t.key).filter((k): k is string => k !== null))];
+      profiles.recordMatch(id, keys);
+    } else if (result.miss) {
+      sound.boop();
+      showCombo(0);
+      showMiss(root, id, result);
+    }
+    if (game.status === 'won') void finish(true);
+    else if (game.status === 'lost') setTimeout(() => resultModal(id, game, { sticker: false, treat: false }), 400);
   };
+
+  const finish = async (won: boolean) => {
+    if (!won) return;
+    const news = profiles.recordWin(id, level.id, game.stars);
+    if (game.movesLeft > 0) {
+      const banner = root.querySelector<HTMLElement>('[data-pops]')!;
+      const el = document.createElement('div');
+      el.className = 'banner';
+      el.textContent = `Zoomies time! ${game.movesLeft} goes left = bonus!`;
+      banner.appendChild(el);
+      await new Promise((r) => setTimeout(r, 900));
+      await view.hold(() => view.play(game.finale()));
+      el.remove();
+      update();
+    }
+    confetti(root);
+    setTimeout(() => resultModal(id, game, news), 500);
+  };
+
+  const treatBtn = root.querySelector<HTMLButtonElement>('[data-treat]')!;
+  treatBtn.addEventListener('click', () => {
+    if (!view.idle || game.status !== 'playing' || !profiles.useTreat(id)) return;
+    const spot = { r: Math.floor(Math.random() * 8), c: Math.floor(Math.random() * 8) };
+    game.giveBall(spot);
+    view.redraw();
+    sound.bark();
+    pop('Tennis ball! Pair it with any dog', spot, true);
+    const left = profiles.get(id)!.treats;
+    root.querySelector('[data-treats]')!.textContent = String(left);
+    if (!left) treatBtn.setAttribute('hidden', '');
+  });
+
+  // Test hook: lets the end-to-end tests find pairs in screen pixels.
   (window as unknown as { fetchGame: unknown }).fetchGame = {
     game,
     idle: () => view.idle,
@@ -341,16 +474,22 @@ async function playScreen(id: string, level: Level): Promise<void> {
       const h = game.hint();
       return h && toScreen(h);
     },
-    missMove: () => {
-      for (let r = 0; r < 8; r++)
-        for (let c = 0; c < 8; c++)
-          for (const z of [{ r, c: c + 1 }, { r: r + 1, c }]) {
-            const a = { r, c };
-            if (z.r > 7 || z.c > 7 || swapWorks(game.board, a, z)) continue;
-            if (nearMiss(game.board, a, z)) return toScreen([a, z]);
-          }
+    /** A pair that helps the goal when there is one, as a child aiming for it would pick. */
+    goalPair: () => {
+      const g = level.goal;
+      const cells = game.board.tiles.flatMap((row, r) => row.map((t, c) => ({ r, c, t: t! })));
+      const helps = (x: (typeof cells)[number]) => (g.kind === 'collect' ? x.t.key === g.key : game.board.mud[x.r][x.c]);
+      for (const x of cells.filter(helps))
+        for (const y of cells) if ((x.r !== y.r || x.c !== y.c) && x.t.key && x.t.key === y.t.key) return toScreen([x, y]);
+      const h = game.hint();
+      return h && toScreen(h);
+    },
+    wrongPair: () => {
+      const cells = game.board.tiles.flatMap((row, r) => row.map((t, c) => ({ r, c, t: t! })));
+      for (const x of cells) for (const y of cells) if (x.t.key && y.t.key && x.t.key !== y.t.key) return toScreen([x, y]);
       return null;
     },
+    cell: (r: number, c: number) => toScreen([{ r, c }])[0],
   };
 }
 
@@ -367,26 +506,97 @@ function boardSize(root: HTMLElement): number {
   return Math.max(240, Math.floor(Math.min(w, h, 880) / 8) * 8);
 }
 
-function showTutorial(root: HTMLElement, view: BoardView, game: Game): void {
-  root.querySelector('[data-tip]')!.removeAttribute('hidden');
-  const hand = root.querySelector<HTMLElement>('.hand')!;
-  const h = game.hint();
-  if (!h) return;
-  const [a, z] = h.map((pos) => view.centre(pos));
-  hand.style.setProperty('--x0', `${a.x}px`);
-  hand.style.setProperty('--y0', `${a.y}px`);
-  hand.style.setProperty('--x1', `${z.x}px`);
-  hand.style.setProperty('--y1', `${z.y}px`);
-  hand.removeAttribute('hidden');
+// ---------- tutorial: Biscuit walks the child through their first pair ----------
+
+const TUT_A = { r: 3, c: 1 };
+const TUT_B = { r: 4, c: 6 };
+
+/** Puts ½ and 2/4 where Biscuit will point. */
+function setUpTutorial(game: Game): void {
+  game.place(TUT_A, { form: 'tag', n: 1, d: 2 }, '1/2');
+  game.place(TUT_B, { form: 'tag', n: 2, d: 4 }, '1/2');
 }
 
-function showMiss(root: HTMLElement, id: string, result: SwapResult): void {
-  const { moved, meant } = result.miss!;
-  profiles.recordMiss(id, moved.key!, meant.key!);
-  const a = moved.display as Display;
-  const b = meant.display as Display;
-  const va = valueOf(moved.key!);
-  const vb = valueOf(meant.key!);
+function runTutorial(
+  root: HTMLElement,
+  view: BoardView,
+  toScreen: (cells: Pos[]) => { x: number; y: number }[],
+  id: string,
+): { picked: (r: PickResult) => void; reposition: () => void } {
+  const biscuit = root.querySelector<HTMLElement>('[data-biscuit]')!;
+  const say = root.querySelector<HTMLElement>('[data-say]')!;
+  const spot = root.querySelector<HTMLElement>('[data-spot]')!;
+  let step = 0;
+  let target: Pos | null = null;
+
+  const point = (p: Pos | null) => {
+    target = p;
+    view.lockTo = p ?? { r: -1, c: -1 };
+    if (!p) {
+      spot.setAttribute('hidden', '');
+      return;
+    }
+    const wrap = root.querySelector<HTMLElement>('.board-wrap')!.getBoundingClientRect();
+    const [pt] = toScreen([p]);
+    const size = view.app.canvas.getBoundingClientRect().width / 8;
+    spot.style.left = `${pt.x - wrap.left - size * 0.6}px`;
+    spot.style.top = `${pt.y - wrap.top - size * 0.6}px`;
+    spot.style.width = spot.style.height = `${size * 1.2}px`;
+    spot.removeAttribute('hidden');
+  };
+
+  const show = (html: string) => {
+    biscuit.removeAttribute('hidden');
+    say.innerHTML = html;
+  };
+
+  const steps = [
+    () => {
+      show("Hi, I'm <b>Biscuit</b>! Let's play. Tap the dog holding <b>1/2</b>.");
+      point(TUT_A);
+    },
+    () => {
+      show('<b>2/4</b> is worth the same as <b>1/2</b>. Tap it to make a pair!');
+      point(TUT_B);
+    },
+    () => {
+      point(null);
+      show(html`Woof! Look, they're the same size:
+        <div class="bars"><div><span>1/2</span>${barSvg({ form: 'tag', n: 1, d: 2 })}</div><div><span>2/4</span>${barSvg({ form: 'tag', n: 2, d: 4 })}</div></div>
+        <button class="big small" data-next>Got it!</button>`);
+      say.querySelector('[data-next]')!.addEventListener('click', next);
+    },
+    () => {
+      view.lockTo = null;
+      show('Your turn! Tap <b>any two dogs worth the same</b>. They can be anywhere. Quick pairs make a <b>combo</b>!');
+    },
+    () => {
+      biscuit.setAttribute('hidden', '');
+      profiles.markSeen(id, ['tutorial']);
+    },
+  ];
+  const next = () => steps[++step]?.();
+  steps[0]();
+  view.onSelect = (p) => {
+    if (step === 0 && p) next();
+  };
+
+  return {
+    picked: (r) => {
+      if ((step === 1 || step === 3) && r.ok) next();
+    },
+    reposition: () => point(target),
+  };
+}
+
+function showMiss(root: HTMLElement, id: string, result: PickResult): void {
+  const { a: ta, z: tz } = result.miss!;
+  if (!ta.key || !tz.key) return;
+  profiles.recordMiss(id, ta.key, tz.key);
+  const a = ta.display as Display;
+  const b = tz.display as Display;
+  const va = valueOf(ta.key);
+  const vb = valueOf(tz.key);
   const box = root.querySelector<HTMLElement>('[data-miss]')!;
   box.innerHTML = html`
     <p><b>${displayText(a)}</b> and <b>${displayText(b)}</b> are not the same.</p>
@@ -394,7 +604,7 @@ function showMiss(root: HTMLElement, id: string, result: SwapResult): void {
       <div><span>${displayText(a)}</span>${barSvg(a)}</div>
       <div><span>${displayText(b)}</span>${barSvg(b)}</div>
     </div>
-    <p><b>${displayText(va > vb ? a : b)}</b> is a bit more. Try again!</p>`;
+    <p><b>${displayText(va > vb ? a : b)}</b> is more. Try again!</p>`;
   box.removeAttribute('hidden');
   box.classList.remove('pop');
   void box.offsetWidth;
@@ -405,17 +615,37 @@ function showMiss(root: HTMLElement, id: string, result: SwapResult): void {
   box.onclick = hide;
 }
 
-function resultModal(id: string, game: Game): void {
+/** Paper confetti in the tile colours, falling over the page. */
+function confetti(root: HTMLElement): void {
+  const colours = ['#ff6b8b', '#ffa53d', '#ffd83d', '#5fd38d', '#4cc3ff', '#a98bff'];
+  const layer = document.createElement('div');
+  layer.className = 'confetti';
+  for (let i = 0; i < 70; i++) {
+    const bit = document.createElement('i');
+    bit.style.left = `${Math.random() * 100}%`;
+    bit.style.background = colours[i % colours.length];
+    bit.style.animationDelay = `${Math.random() * 0.6}s`;
+    bit.style.animationDuration = `${1.6 + Math.random() * 1.2}s`;
+    layer.appendChild(bit);
+  }
+  root.appendChild(layer);
+  setTimeout(() => layer.remove(), 3500);
+}
+
+function resultModal(id: string, game: Game, news: { sticker: boolean; treat: boolean }): void {
   const won = game.status === 'won';
   sound.tune(won);
-  if (won) profiles.recordStars(id, game.level.id, game.stars);
   const next = nextLevel(game.level.id);
+  const p = profiles.get(id)!;
+  const dog = stickerFor(game.level.id);
   const m = modal(
     won
       ? html`
         <h2>Good dog! 🐾</h2>
         <p class="stars-big">${'★'.repeat(game.stars)}${'☆'.repeat(3 - game.stars)}</p>
-        <p>Score <b>${game.score}</b> · ${game.movesLeft} moves left</p>
+        <p>Score <b>${game.score}</b></p>
+        ${news.sticker ? `<div class="won-dog"><img src="${dogUrl(dog)}" alt="" /><p>New sticker! You won the <b>${dogName(dog)}</b>. Look out for them on your board!</p></div>` : ''}
+        ${news.treat ? `<p class="treat-news">🦴 Daily treat! <b>${currentStreak(p)}-day streak</b>. Use treats in a level for a tennis ball.</p>` : ''}
         <div class="row">
           <button class="ghost" data-map>Map</button>
           ${next ? '<button class="big" data-next>Next level</button>' : '<button class="big" data-map>Finish</button>'}

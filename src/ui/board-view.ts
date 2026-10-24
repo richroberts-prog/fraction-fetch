@@ -1,9 +1,10 @@
-// The board on screen: draws tiles, takes swipes and taps, and animates each phase of a move.
+// The board on screen: draws tiles, takes taps, and animates each phase of a pick.
 
 import { Application, Assets, Container, Graphics, Rectangle, Sprite, type Texture } from 'pixi.js';
 import type { Pos, Tile } from '../core/board';
-import type { Game, Phase, SwapResult } from '../core/game';
-import { BREED_NAMES, tileArt } from './tile-art';
+import type { Game, Phase, PickResult } from '../core/game';
+import { DOG_NAMES } from '../core/profiles';
+import { tileArt } from './tile-art';
 
 type Ease = (t: number) => number;
 const easeOut: Ease = (t) => 1 - (1 - t) * (1 - t);
@@ -20,7 +21,7 @@ interface Tween {
 let dogTextures: Texture[] | null = null;
 
 export async function loadArt(base: string): Promise<void> {
-  dogTextures ??= await Promise.all(BREED_NAMES.map((n) => Assets.load<Texture>(`${base}art/${n}.webp`)));
+  dogTextures ??= await Promise.all(DOG_NAMES.map((n) => Assets.load<Texture>(`${base}art/${n}.webp`)));
 }
 
 export class BoardView {
@@ -37,20 +38,22 @@ export class BoardView {
   private cell = 60;
   private game!: Game;
   private busy = false;
-  private down: { pos: Pos; x: number; y: number } | null = null;
   private selected: Pos | null = null;
+  private ring = new Graphics();
+  /** When set, only this cell takes taps (the tutorial points at one tile at a time). */
+  lockTo: Pos | null = null;
   private hintTimer = 0;
   private hinting: Container[] = [];
   private raf = 0;
   /** Set when the scene changed outside a tween and needs one draw. */
   private dirty = true;
 
-  /** Called after each swap, with the result, once the animation has played. */
-  onMove: (result: SwapResult) => void = () => {};
-  /** Called as each clear happens, for sounds. */
+  /** Called after each pick, right or wrong, once the animation has played. */
+  onPick: (result: PickResult) => void = () => {};
+  /** Called as each clear happens, for sounds and effects. */
   onClear: (phase: Extract<Phase, { kind: 'clear' }>) => void = () => {};
-  /** Called on a swap that does not work. */
-  onBadSwap: (result: SwapResult) => void = () => {};
+  /** Called when a tile is tapped (selected or deselected). */
+  onSelect: (p: Pos | null) => void = () => {};
 
   async init(host: HTMLElement, size: number): Promise<void> {
     await this.app.init({
@@ -88,8 +91,7 @@ export class BoardView {
       }, 50),
     );
     canvas.addEventListener('pointerdown', (e) => this.pointerDown(e));
-    canvas.addEventListener('pointermove', (e) => this.pointerMove(e));
-    window.addEventListener('pointerup', () => (this.down = null));
+    this.fxLayer.addChild(this.ring);
     this.size = size;
   }
 
@@ -104,7 +106,7 @@ export class BoardView {
   show(game: Game): void {
     this.game = game;
     this.busy = false;
-    this.selected = null;
+    this.select(null);
     this.rebuild();
     this.dirty = true;
   }
@@ -300,7 +302,7 @@ export class BoardView {
         }
         if (s.x !== target.x || s.y !== target.y) {
           const rows = Math.abs(target.y - s.y) / this.cell;
-          const ms = phase.kind === 'fall' ? 110 + rows * 55 : phase.kind === 'shuffle' ? 420 : 170;
+          const ms = phase.kind === 'fall' ? 110 + rows * 55 : 170;
           moves.push(this.tween(s, { x: target.x, y: target.y }, ms, phase.kind === 'fall' ? easeIn : easeOut));
         }
       }),
@@ -334,44 +336,45 @@ export class BoardView {
 
   private pointerDown(e: PointerEvent): void {
     const pos = this.cellAt(e);
-    if (!pos || this.busy) return;
-    this.down = { pos, x: e.clientX, y: e.clientY };
-    if (this.selected && Math.abs(this.selected.r - pos.r) + Math.abs(this.selected.c - pos.c) === 1) {
-      const from = this.selected;
+    if (!pos || this.busy || this.game.status !== 'playing') return;
+    if (this.lockTo && (this.lockTo.r !== pos.r || this.lockTo.c !== pos.c)) return;
+    this.stopHint();
+    const sel = this.selected;
+    if (sel && sel.r === pos.r && sel.c === pos.c) {
       this.select(null);
-      this.down = null;
-      void this.trySwap(from, pos);
+      this.onSelect(null);
       return;
     }
-    this.select(this.selected && this.selected.r === pos.r && this.selected.c === pos.c ? null : pos);
-  }
-
-  private pointerMove(e: PointerEvent): void {
-    if (!this.down || this.busy) return;
-    const rect = this.app.canvas.getBoundingClientRect();
-    const cellPx = rect.width / 8;
-    const dx = e.clientX - this.down.x;
-    const dy = e.clientY - this.down.y;
-    if (Math.max(Math.abs(dx), Math.abs(dy)) < cellPx * 0.35) return;
-    const from = this.down.pos;
-    const to = Math.abs(dx) > Math.abs(dy) ? { r: from.r, c: from.c + Math.sign(dx) } : { r: from.r + Math.sign(dy), c: from.c };
-    this.down = null;
+    if (!sel) {
+      this.select(pos);
+      this.onSelect(pos);
+      return;
+    }
     this.select(null);
-    if (to.r >= 0 && to.r < 8 && to.c >= 0 && to.c < 8) void this.trySwap(from, to);
+    void this.tryPick(sel, pos);
   }
 
   private select(p: Pos | null): void {
-    if (this.selected) {
+    if (this.selected && this.game) {
       const t = this.game.board.tiles[this.selected.r][this.selected.c];
       const s = t && this.sprites.get(t.id);
       if (s) void this.tween(s, { scale: 1 }, 120);
     }
     this.selected = p;
-    if (p) {
+    this.ring.clear();
+    if (p && this.game) {
       const t = this.game.board.tiles[p.r][p.c];
       const s = t && this.sprites.get(t.id);
-      if (s) void this.tween(s, { scale: 1.12 }, 120);
+      if (s) void this.tween(s, { scale: 1.1 }, 120);
+      const c = this.centre(p);
+      const w = this.cell * 1.02;
+      this.ring
+        .roundRect(c.x - w / 2, c.y - w / 2, w, w, this.cell * 0.22)
+        .stroke({ width: this.cell * 0.08, color: 0xffffff })
+        .roundRect(c.x - w / 2, c.y - w / 2, w, w, this.cell * 0.22)
+        .stroke({ width: this.cell * 0.035, color: 0xff6b8b });
     }
+    this.dirty = true;
   }
 
   private startHint(): void {
@@ -387,27 +390,65 @@ export class BoardView {
     this.hintTimer = 0;
   }
 
-  async trySwap(a: Pos, z: Pos): Promise<SwapResult | null> {
+  /** Wobbles a tile side to side: "not that one". */
+  private async wobble(p: Pos): Promise<void> {
+    const t = this.game.board.tiles[p.r][p.c];
+    const s = t && this.sprites.get(t.id);
+    if (!s) return;
+    const x = s.x;
+    for (const dx of [-0.08, 0.08, -0.05, 0.05, 0]) await this.tween(s, { x: x + dx * this.cell }, 55);
+  }
+
+  /** Plays phases from the game (a pick, or the finale) and waits until they finish. */
+  async play(phases: Phase[], pair?: [Pos, Pos]): Promise<void> {
+    if (pair) {
+      // The two dogs run to meet in the middle before they go.
+      const [a, z] = pair.map((p) => this.sprites.get(phases[0].kind === 'clear' ? this.idAt(p) : -1));
+      if (a && z) {
+        const mid = { x: (a.x + z.x) / 2, y: (a.y + z.y) / 2 };
+        this.tileLayer.addChild(a, z);
+        await Promise.all([this.tween(a, { ...mid, scale: 1.2 }, 220), this.tween(z, { ...mid, scale: 1.2 }, 220)]);
+      }
+    }
+    for (const phase of phases) {
+      if (phase.kind === 'clear') this.onClear(phase);
+      await this.apply(phase);
+      if (phase.kind === 'clear') await new Promise((r) => setTimeout(r, 60));
+    }
+  }
+
+  /** Sprite id of the tile at p before the pick, found from what is drawn there. */
+  private idAt(p: Pos): number {
+    const c = this.centre(p);
+    for (const [id, s] of this.sprites) if (Math.abs(s.x - c.x) < 1 && Math.abs(s.y - c.y) < 1) return id;
+    return -1;
+  }
+
+  async tryPick(a: Pos, z: Pos): Promise<PickResult | null> {
     if (this.busy) return null;
     this.busy = true;
     this.stopHint();
-    const result = this.game.swap(a, z);
-    if (!result.ok) {
-      if (result.phases.length) {
-        this.onBadSwap(result);
-        await this.apply(result.phases[0]);
-        await this.apply(result.phases[1]);
-      }
-    } else {
-      for (const phase of result.phases) {
-        if (phase.kind === 'clear') this.onClear(phase);
-        await this.apply(phase);
-        if (phase.kind === 'clear') await new Promise((r) => setTimeout(r, 60));
-      }
-      this.onMove(result);
-    }
+    const result = this.game.pick(a, z, performance.now());
+    if (result.ok) await this.play(result.phases, [a, z]);
+    else if (result.miss) await Promise.all([this.wobble(a), this.wobble(z)]);
+    this.onPick(result);
     this.busy = false;
     this.hintTimer = 0;
     return result;
+  }
+
+  /** Lets the screen run the finale or a redraw while input waits. */
+  async hold(work: () => Promise<void>): Promise<void> {
+    this.busy = true;
+    try {
+      await work();
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  redraw(): void {
+    this.rebuild();
+    this.dirty = true;
   }
 }
