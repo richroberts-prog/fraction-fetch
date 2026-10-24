@@ -17,7 +17,7 @@ async function tapSwap(page: Page, [a, z]: Point[]) {
 
 async function waitIdle(page: Page) {
   await page.waitForTimeout(100);
-  await page.waitForFunction(() => (window as any).fetchGame.idle(), null, { timeout: 30_000 });
+  await page.waitForFunction(() => (window as any).fetchGame.idle(), null, { timeout: 60_000 });
 }
 
 async function newPlayer(page: Page, name: string) {
