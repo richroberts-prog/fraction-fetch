@@ -12,5 +12,7 @@ export default defineConfig({
     { name: 'tablet', use: { ...devices['iPad (gen 7)'], browserName: 'chromium' } },
     { name: 'phone', use: { ...devices['Pixel 7'] } },
     { name: 'laptop', use: { viewport: { width: 1366, height: 768 } } },
+    // Fire HD 8 on its side in Silk: the case where the board used to shrink to 39px tiles.
+    { name: 'fire-sideways', use: { viewport: { width: 960, height: 544 }, deviceScaleFactor: 1.333, hasTouch: true, isMobile: true } },
   ],
 });

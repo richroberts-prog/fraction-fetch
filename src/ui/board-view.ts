@@ -79,6 +79,13 @@ export class BoardView {
     this.raf = requestAnimationFrame(frame);
     const canvas = this.app.canvas;
     canvas.style.touchAction = 'none';
+    // Some tablets drop the GPU's memory when turned; the pre-drawn tiles go with it, so redraw them.
+    canvas.addEventListener('webglcontextrestored', () =>
+      setTimeout(() => {
+        if (this.game) this.rebuild();
+        this.dirty = true;
+      }, 50),
+    );
     canvas.addEventListener('pointerdown', (e) => this.pointerDown(e));
     canvas.addEventListener('pointermove', (e) => this.pointerMove(e));
     window.addEventListener('pointerup', () => (this.down = null));

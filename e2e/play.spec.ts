@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import sharp from 'sharp';
 
 type Point = { x: number; y: number };
 
@@ -66,6 +67,8 @@ test('a new player takes the check, plays level 1, and sees a result', async ({ 
   expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
   expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
+  // Tiles stay big enough to read: the board uses most of the short side of the screen.
+  expect(box.width).toBeGreaterThanOrEqual(Math.min(viewport.width, viewport.height) * 0.85);
   await page.screenshot({ path: `test-results/board-${test.info().project.name}.png` });
 
   // A near-miss swap costs nothing and shows the two values as bars.
@@ -152,4 +155,34 @@ test('installs as an app and works offline', async ({ page, context }) => {
   await page.getByRole('button', { name: "Let's go!" }).click();
   await expect(page.locator('.avatar')).toBeVisible();
   expect(await page.locator('.avatar').evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+});
+
+test('turning the tablet keeps the board full size and drawn', async ({ page }) => {
+  await newPlayer(page, 'Dot');
+  await takeCheck(page, 5);
+  await page.click('[data-level="1-1"]');
+  await page.getByRole('button', { name: 'Play!' }).click();
+  await page.waitForFunction(() => (window as any).fetchGame);
+  const start = page.viewportSize()!;
+  // Turn it, and drop the GPU memory as some tablets do when turned.
+  await page.evaluate(() => {
+    const gl = document.querySelector('canvas')!.getContext('webgl2') ?? document.querySelector('canvas')!.getContext('webgl');
+    (window as any).lose = gl!.getExtension('WEBGL_lose_context');
+    (window as any).lose.loseContext();
+  });
+  await page.setViewportSize({ width: start.height, height: start.width });
+  await page.evaluate(() => (window as any).lose.restoreContext());
+  await page.waitForTimeout(1200);
+  const box = (await page.locator('canvas').boundingBox())!;
+  expect(box.width).toBeGreaterThanOrEqual(Math.min(start.width, start.height) * 0.85);
+  // The board is drawn, not blank: bright tile colours and white number tags cover most of it.
+  // The pale park behind scores about 0.1.
+  const { data, info } = await sharp(await page.locator('canvas').screenshot()).raw().toBuffer({ resolveWithObject: true });
+  let vivid = 0;
+  for (let i = 0; i < data.length; i += info.channels) {
+    const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
+    if (Math.max(r, g, b) - Math.min(r, g, b) > 90 || Math.min(r, g, b) > 245) vivid++;
+  }
+  const coloured = vivid / (info.width * info.height);
+  expect(coloured).toBeGreaterThan(0.4);
 });

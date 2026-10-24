@@ -44,12 +44,8 @@ describe('fractions', () => {
   });
 
   it('shows a value every allowed way', () => {
-    const shown = displaysFor('1/2', ['tag', 'bone', 'decimal', 'percent'], [2, 4, 12]).map((d) => `${d.form}:${displayText(d)}`);
-    expect(shown).toEqual(['tag:1/2', 'tag:2/4', 'tag:6/12', 'bone:1/2', 'bone:2/4', 'decimal:0.5', 'percent:50%']);
-  });
-
-  it('never draws a picture with more parts than a tile can show', () => {
-    expect(displaysFor('1/2', ['bowl'], [2, 12, 100]).map((d) => d.d)).toEqual([2]);
+    const shown = displaysFor('1/2', ['tag', 'decimal', 'percent'], [2, 4, 12]).map((d) => `${d.form}:${displayText(d)}`);
+    expect(shown).toEqual(['tag:1/2', 'tag:2/4', 'tag:6/12', 'decimal:0.5', 'percent:50%']);
   });
 
   it('skips decimals and percents for values with no exact one', () => {

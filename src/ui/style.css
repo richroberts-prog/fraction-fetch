@@ -398,16 +398,62 @@ main {
 /* ---------- play ---------- */
 
 .play {
-  padding: 10px 12px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   min-height: 100dvh;
+  max-width: none;
 }
 
-.play .bar {
+.hud {
   width: 100%;
+  max-width: 900px;
+  flex-wrap: wrap;
+}
+
+/* On its side, the HUD becomes a column on the left and the board takes the full height. */
+@media (orientation: landscape) {
+  .play {
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .hud {
+    width: 230px;
+    flex: none;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas:
+      'back . mute'
+      'goal goal goal'
+      'moves moves moves'
+      'tip tip tip';
+    gap: 10px;
+    align-self: center;
+  }
+
+  .hud .back {
+    grid-area: back;
+  }
+
+  .hud [data-mute] {
+    grid-area: mute;
+  }
+
+  .hud .goal-box {
+    grid-area: goal;
+  }
+
+  .hud .moves {
+    grid-area: moves;
+  }
+
+  .hud .tip {
+    grid-area: tip;
+  }
 }
 
 .goal-box {
@@ -418,12 +464,12 @@ main {
 }
 
 .goal-box strong {
-  font-size: clamp(0.95rem, 3.6vw, 1.2rem);
+  font-size: clamp(1rem, 3.6vw, 1.25rem);
   line-height: 1.15;
 }
 
 .goal-box small {
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 
 .meter {
@@ -459,12 +505,6 @@ main {
   font-size: 0.75rem;
 }
 
-.score {
-  background: var(--card);
-  padding: 2px 14px;
-  border-radius: 99px;
-}
-
 .board-wrap {
   position: relative;
   background: rgb(255 255 255 / 0.35);
@@ -498,12 +538,13 @@ main {
 }
 
 .tip {
-  background: var(--card);
+  flex-basis: 100%;
+  background: #fff7c2;
   border-radius: 14px;
-  padding: 10px 14px;
+  padding: 8px 12px;
   margin: 0;
   text-align: center;
-  font-size: 1.1rem;
+  font-size: 1rem;
 }
 
 .miss {

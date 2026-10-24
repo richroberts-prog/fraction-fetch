@@ -33,10 +33,9 @@ export function valueOf(key: string): number {
 
 /**
  * How a tile shows its value.
- * tag: written fraction 3/4. bone: a bar in d equal parts, n shaded.
- * bowl: a circle in d equal slices, n filled. decimal: 0.75. percent: 75%.
+ * tag: written fraction 3/4. decimal: 0.75. percent: 75%. All numbers: pictures were too hard to read on a tile.
  */
-export type Form = 'tag' | 'bone' | 'bowl' | 'decimal' | 'percent';
+export type Form = 'tag' | 'decimal' | 'percent';
 
 export interface Display {
   form: Form;
@@ -44,9 +43,6 @@ export interface Display {
   n: number;
   d: number;
 }
-
-/** Most parts a picture can have and still be readable on a phone-sized tile. */
-export const MAX_PICTURE_PARTS = 10;
 
 /** True when the value can be written exactly as tenths or hundredths. */
 export function hasDecimal(key: string): boolean {
@@ -65,7 +61,7 @@ export function percentText(display: Display): string {
 }
 
 /**
- * Every way to show this value with the forms allowed. Written fractions and pictures use
+ * Every way to show this value with the forms allowed. Written fractions use
  * the denominators in dens that the value fits (½ with dens [2, 4, 10] gives 1/2, 2/4, 5/10).
  */
 export function displaysFor(key: string, forms: Form[], dens: number[]): Display[] {
@@ -84,7 +80,6 @@ export function displaysFor(key: string, forms: Form[], dens: number[]): Display
     }
     for (const d of dens) {
       if (d % base.d !== 0) continue;
-      if (form !== 'tag' && d > MAX_PICTURE_PARTS) continue;
       out.push({ form, n: (base.n * d) / base.d, d });
     }
   }
