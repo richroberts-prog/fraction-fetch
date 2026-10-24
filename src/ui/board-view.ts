@@ -70,7 +70,8 @@ export class BoardView {
     let last = performance.now();
     const frame = (now: number) => {
       if (this.app.renderer === null) return;
-      this.tick(Math.min(now - last, 100));
+      // Real time, so a slow tablet skips frames rather than slowing the game down.
+      this.tick(Math.min(now - last, 250));
       last = now;
       if (this.dirty || this.tweens.length || this.hinting.length) this.app.render();
       this.dirty = false;
