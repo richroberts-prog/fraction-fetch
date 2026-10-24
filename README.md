@@ -1,7 +1,7 @@
 # Fraction Fetch
 
 A dog-themed match-3 game that teaches Year 5 (UK) fractions. Swap dogs to line up three
-that are **worth the same**: ½, 2/4, a half-shaded bone, 0.5 and 50% all match.
+that are **worth the same**: ½, 2/4, 0.5 and 50% all match.
 
 Play: https://richroberts-prog.github.io/fraction-fetch/ (installable, works offline).
 
@@ -33,6 +33,5 @@ npm run build && npm run e2e   # tablet, phone and laptop browser tests (Playwri
 - `src/ui/`: PixiJS board, tile drawing, sounds (made in Web Audio, no files), styles.
 - `src/main.ts`: screens.
 - `scripts/gen-art.mjs`: makes the dog art via OpenRouter. Raw images are in `art-src/`, finished ones in `public/art/`.
-  Fraction pictures are drawn in code so the parts are exactly equal.
 
 Pushes to `main` deploy to GitHub Pages.

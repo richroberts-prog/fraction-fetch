@@ -219,7 +219,7 @@ function goalExamples(level: Level): string {
     return `There are ${total} mud squares. ${prettyKey(`${g.n}/${g.d}`)} of ${total} is ${mudTarget(level)}. Match dogs on top of the mud to clean it.`;
   }
   const shown = [...new Set(displaysFor(g.key, level.forms, level.dens).map(displayText))];
-  return `${prettyKey(g.key)} can look like ${shown.join(', ')}, or a picture with ${prettyKey(g.key)} filled in.`;
+  return `${prettyKey(g.key)} can look like ${shown.join(', ')}.`;
 }
 
 function modal(markup: string): HTMLElement {
@@ -248,20 +248,19 @@ async function playScreen(id: string, level: Level): Promise<void> {
   const p = profiles.get(id)!;
   const root = screen(html`
     <main class="play">
-      <header class="bar">
-        <button class="icon" data-map aria-label="Back to map">⬅</button>
+      <header class="bar hud">
+        <button class="icon back" data-map aria-label="Back to map">⬅</button>
         <div class="goal-box">
           <small>Level ${level.id}</small>
           <strong>${goalText(level)}</strong>
           <div class="meter"><span data-meter></span></div>
           <small data-progress></small>
         </div>
-        <div class="moves"><strong data-moves>${level.moves}</strong><small>moves</small></div>
+        <div class="moves"><strong data-moves>${level.moves}</strong><small>moves</small><small>Score <b data-score>0</b></small></div>
         ${muteButton()}
+        <p class="tip" data-tip hidden>Match 3 dogs worth the same! Swipe a dog to swap it with its neighbour.</p>
       </header>
-      <div class="score">Score <b data-score>0</b></div>
       <div class="board-wrap"><div class="board" data-board></div><div class="hand" hidden>👆</div></div>
-      <p class="tip" data-tip hidden>Match 3 dogs worth the same! Swipe a dog to swap it with its neighbour.</p>
       <div class="miss" data-miss hidden></div>
     </main>`);
   wireMute(root);
@@ -273,13 +272,22 @@ async function playScreen(id: string, level: Level): Promise<void> {
   board = view;
   await loadArt(BASE);
   await document.fonts.load('600 20px Fredoka');
-  await view.init(host, boardSize());
+  await view.init(host, boardSize(root));
   view.show(game);
+  // Some tablet browsers fire their rotate event before the screen size changes, so watch the
+  // page's real size instead, and size the board once it settles.
+  let resizeTimer = 0;
+  const watcher = new ResizeObserver(() => {
+    clearTimeout(resizeTimer);
+    resizeTimer = window.setTimeout(() => {
+      if (board === view) view.size = boardSize(root);
+      else watcher.disconnect();
+    }, 150);
+  });
+  watcher.observe(document.documentElement);
   const onResize = () => {
-    if (board === view) view.size = boardSize();
-    else window.removeEventListener('resize', onResize);
+    if (board === view) view.size = boardSize(root);
   };
-  window.addEventListener('resize', onResize);
 
   const update = () => {
     const pr = game.progress;
@@ -309,7 +317,11 @@ async function playScreen(id: string, level: Level): Promise<void> {
   view.onMove = () => {
     update();
     root.querySelector('.hand')?.setAttribute('hidden', '');
-    root.querySelector('[data-tip]')?.setAttribute('hidden', '');
+    const tip = root.querySelector('[data-tip]');
+    if (tip && !tip.hasAttribute('hidden')) {
+      tip.setAttribute('hidden', '');
+      onResize();
+    }
     if (game.status !== 'playing') setTimeout(() => resultModal(id, game), 400);
   };
 
@@ -342,10 +354,17 @@ async function playScreen(id: string, level: Level): Promise<void> {
   };
 }
 
-function boardSize(): number {
-  const w = Math.min(window.innerWidth - 36, 760);
-  const h = window.innerHeight - 230;
-  return Math.max(280, Math.floor(Math.min(w, h) / 8) * 8);
+/**
+ * Biggest board that fits the space the HUD leaves: below it when the tablet is upright,
+ * beside it when it is on its side.
+ */
+function boardSize(root: HTMLElement): number {
+  const hud = root.querySelector('.hud')!.getBoundingClientRect();
+  const frame = 12 + 12 + 12; // page padding, board padding, gap
+  const sideways = window.innerWidth > window.innerHeight;
+  const w = window.innerWidth - frame - (sideways ? hud.width + 12 : 0);
+  const h = window.innerHeight - frame - (sideways ? 0 : hud.bottom);
+  return Math.max(240, Math.floor(Math.min(w, h, 880) / 8) * 8);
 }
 
 function showTutorial(root: HTMLElement, view: BoardView, game: Game): void {

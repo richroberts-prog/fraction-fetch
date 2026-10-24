@@ -1,5 +1,4 @@
 // Draws one tile: a bright card, a dog, and the fraction the dog holds.
-// Fraction pictures are drawn in code so every part is exactly equal.
 
 import { Container, Graphics, Sprite, Text, type Texture } from 'pixi.js';
 import type { Tile } from '../core/board';
@@ -8,7 +7,6 @@ import { decimalText, percentText, type Display } from '../core/fractions';
 /** Tile colours: bright and random, never tied to value. */
 export const PALETTE = [0xff6b8b, 0xffa53d, 0xffd83d, 0x5fd38d, 0x4cc3ff, 0xa98bff];
 const INK = 0x2b2340;
-const KIBBLE = 0xc9772e;
 const FONT = 'Fredoka, system-ui, sans-serif';
 
 export const BREED_NAMES = ['corgi', 'dachshund', 'dalmatian', 'pug', 'collie', 'labrador', 'husky', 'poodle'];
@@ -27,17 +25,17 @@ function label(text: string, size: number, colour = INK): Text {
 /** Written fraction on a white dog tag: numerator over a line over denominator. */
 function tag(display: Display, s: number): Container {
   const c = new Container();
-  const w = s * 0.66;
-  const h = s * 0.54;
-  c.addChild(new Graphics().roundRect(-w / 2, -h / 2, w, h, s * 0.12).fill(0xffffff).stroke({ width: s * 0.025, color: INK }));
+  const w = s * 0.6;
+  const h = s * 0.76;
+  c.addChild(new Graphics().roundRect(-w / 2, -h / 2, w, h, s * 0.14).fill(0xffffff).stroke({ width: s * 0.03, color: INK }));
   const digits = Math.max(String(display.n).length, String(display.d).length);
-  const size = s * (digits > 2 ? 0.18 : 0.24);
+  const size = s * (digits > 2 ? 0.22 : 0.32);
   const top = label(String(display.n), size);
   top.y = -h * 0.24;
   const bottom = label(String(display.d), size);
-  bottom.y = h * 0.25;
-  const lineW = size * 0.6 * digits + s * 0.04;
-  c.addChild(new Graphics().rect(-lineW / 2, -s * 0.012, lineW, s * 0.024).fill(INK), top, bottom);
+  bottom.y = h * 0.26;
+  const lineW = Math.min(w - s * 0.08, size * 0.6 * digits + s * 0.06);
+  c.addChild(new Graphics().rect(-lineW / 2, -s * 0.016, lineW, s * 0.032).fill(INK), top, bottom);
   return c;
 }
 
@@ -45,54 +43,10 @@ function tag(display: Display, s: number): Container {
 function collar(text: string, s: number): Container {
   const c = new Container();
   const w = s * 0.86;
-  const h = s * 0.32;
-  c.addChild(new Graphics().roundRect(-w / 2, -h / 2, w, h, h / 2).fill(0xe23d4f).stroke({ width: s * 0.025, color: INK }));
-  c.addChild(new Graphics().circle(w / 2 - h * 0.45, 0, h * 0.18).fill(0xffd83d));
-  const t = label(text, s * (text.length > 4 ? 0.2 : 0.23), 0xffffff);
-  t.x = -h * 0.2;
-  c.addChild(t);
+  const h = s * 0.4;
+  c.addChild(new Graphics().roundRect(-w / 2, -h / 2, w, h, h / 2).fill(0xe23d4f).stroke({ width: s * 0.03, color: INK }));
+  c.addChild(label(text, s * (text.length > 3 ? 0.27 : 0.32), 0xffffff));
   return c;
-}
-
-/** A bone whose middle is split into d equal parts, n of them shaded. */
-export function bone(n: number, d: number, s: number): Graphics {
-  const g = new Graphics();
-  const w = s * 0.66;
-  const h = s * 0.26;
-  const knob = h * 0.42;
-  for (const x of [-w / 2, w / 2]) {
-    for (const y of [-h * 0.32, h * 0.32]) g.circle(x, y, knob).fill(0xfff4e0).stroke({ width: s * 0.02, color: INK });
-  }
-  const part = w / d;
-  for (let i = 0; i < d; i++) {
-    g.rect(-w / 2 + i * part, -h / 2, part, h).fill(i < n ? KIBBLE : 0xfff4e0);
-  }
-  g.rect(-w / 2, -h / 2, w, h).stroke({ width: s * 0.02, color: INK });
-  for (let i = 1; i < d; i++) {
-    g.moveTo(-w / 2 + i * part, -h / 2).lineTo(-w / 2 + i * part, h / 2).stroke({ width: s * 0.014, color: INK });
-  }
-  return g;
-}
-
-/** A food bowl seen from above, split into d equal slices, n of them full. */
-export function bowl(n: number, d: number, s: number): Graphics {
-  const g = new Graphics();
-  const r = s * 0.22;
-  g.circle(0, 0, r + s * 0.04).fill(0x7a8cff).stroke({ width: s * 0.02, color: INK });
-  g.circle(0, 0, r).fill(0xffffff);
-  const start = -Math.PI / 2;
-  const step = (Math.PI * 2) / d;
-  for (let i = 0; i < n; i++) {
-    g.moveTo(0, 0).arc(0, 0, r, start + i * step, start + (i + 1) * step).lineTo(0, 0).fill(KIBBLE);
-  }
-  if (d > 1) {
-    for (let i = 0; i < d; i++) {
-      const a = start + i * step;
-      g.moveTo(0, 0).lineTo(Math.cos(a) * r, Math.sin(a) * r).stroke({ width: s * 0.014, color: INK });
-    }
-  }
-  g.circle(0, 0, r).stroke({ width: s * 0.02, color: INK });
-  return g;
 }
 
 function tennisBall(s: number): Graphics {
@@ -107,10 +61,7 @@ function tennisBall(s: number): Graphics {
 export function valueArt(display: Display, s: number): Container {
   if (display.form === 'tag') return tag(display, s);
   if (display.form === 'decimal') return collar(decimalText(display), s);
-  if (display.form === 'percent') return collar(percentText(display), s);
-  const c = new Container();
-  c.addChild(display.form === 'bone' ? bone(display.n, display.d, s) : bowl(display.n, display.d, s));
-  return c;
+  return collar(percentText(display), s);
 }
 
 /** A whole tile of size s, centred on 0,0. */
@@ -133,18 +84,18 @@ export function tileArt(tile: Tile, s: number, dogs: Texture[]): Container {
     return c;
   }
 
-  const dog = new Sprite(dogs[tile.breed % dogs.length]);
-  dog.anchor.set(0.5);
-  const big = tile.display?.form === 'tag';
-  dog.width = dog.height = s * (big ? 0.36 : 0.44);
-  dog.y = -s * (big ? 0.26 : 0.21);
-  c.addChild(dog);
-
+  // The fraction is the biggest thing on the tile; the dog is a badge in the corner.
   if (tile.display) {
     const v = valueArt(tile.display, s);
-    v.y = s * (big ? 0.17 : 0.22);
+    if (tile.display.form === 'tag') v.position.set(s * 0.08, s * 0.04);
+    else v.position.set(0, s * 0.1);
     c.addChild(v);
   }
+  const dog = new Sprite(dogs[tile.breed % dogs.length]);
+  dog.anchor.set(0.5);
+  dog.width = dog.height = s * 0.3;
+  dog.position.set(-s * 0.3, -s * 0.3);
+  c.addChild(dog);
 
   if (tile.special === 'row' || tile.special === 'col') {
     // Speed lines on both edges, along the way the zoomies run.
