@@ -1,0 +1,26 @@
+{
+  "name": "fraction-fetch",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "art": "node scripts/gen-art.mjs"
+  },
+  "dependencies": {
+    "@fontsource/fredoka": "^5.3.0",
+    "pixi.js": "^8.22.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "sharp": "^0.35.5",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.7",
+    "vite-plugin-pwa": "^2.0.0",
+    "vitest": "^3.2.7"
+  }
+}
